@@ -20,19 +20,19 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-import BeautifulSoup
+from bs4 import BeautifulSoup
 import cgi
 import gzip
 import re
 import optparse
 import os
 import mailbox
-import StringIO
+import io
 import sys
 import tempfile
-import urllib2
+import urllib.request, urllib.error, urllib.parse
 
-from urlparse import urlparse
+from urllib.parse import urlparse
 
 def get_parser():
     parser = optparse.OptionParser(usage="usage: %prog [options] <archive url>")
@@ -45,7 +45,7 @@ def usage(parser):
     sys.exit(1)
 
 def fetch(url):
-    fd = urllib2.urlopen(url)
+    fd = urllib.request.urlopen(url)
 
     try:
         return fd.read()
@@ -61,7 +61,7 @@ class MailmanArchive:
         self.archive_url = archive_url
         archive = fetch(archive_url)
 
-        self._soup = BeautifulSoup.BeautifulSoup(archive)
+        self._soup = BeautifulSoup(archive, 'html5lib')
 
     def get_title(self):
         return self._soup.html.head.title.string
@@ -72,24 +72,33 @@ class MailmanArchive:
         (fd, tmpfile) = tempfile.mkstemp()
 
         fd = os.fdopen(fd, "w+b")
-        data = gzip.GzipFile(fileobj=StringIO.StringIO(data_gz)).read()
+        
+        if url.endswith('.gz'):
+            data = gzip.GzipFile(fileobj=io.StringIO(data_gz)).read()
+        else:
+            data = data_gz
+
         fd.write(data)
         fd.close()
 
         mbox = mailbox.mbox(tmpfile)
-        os.remove(tmpfile)
+        #os.remove(tmpfile)
 
         return mbox
 
     def get_month_archives(self):
         ret = []
-
+        i=3
         months = self._soup.findAll("a", href=re.compile(".*txt(.gz)?"))
         for month in months:
+            if i == 0:
+                break
+
+            i -= 1
             url = month.get("href")
 
-            if not url.endswith(".gz"):
-                url = url + ".gz"
+            #if not url.endswith(".gz"):
+            #    url = url + ".gz"
 
             url = self.archive_url + url
             ret.append(url)
@@ -97,47 +106,47 @@ class MailmanArchive:
         return ret
 
 def get_part_field(part, name):
-    io = StringIO.StringIO(part)
+    _io = io.StringIO(part)
 
-    for line in io.readlines():
+    for line in _io.readlines():
         if line.lower().startswith(name):
             parts = line.split(":", 1)
             return parts[1].strip()
 
 def print_rss(archive, mails):
-    print '<rss version="2.0">'
-    print '<channel>'
+    print('<rss version="2.0">')
+    print('<channel>')
 
     title = archive.get_title()
     if title:
-        print '<title>%s</title>' % cgi.escape(title)
-        print '<description>%s</description>' % cgi.escape(title)
+        print('<title>%s</title>' % cgi.escape(title))
+        print('<description>%s</description>' % cgi.escape(title))
 
     link = archive.archive_url
-    print '<link>%s</link>' % cgi.escape(link)
+    print('<link>%s</link>' % cgi.escape(link))
 
     for mail in mails:
-        print '<item>'
+        print('<item>')
         
         author = mail.get("from")
         if author:
             author = author.replace(" at ", "@")
                              
-            print '<author>%s</author>' % cgi.escape(author)
+            print('<author>%s</author>' % cgi.escape(author))
 
         subject = mail.get("subject")
         if subject:
-            print '<title>%s</title>' % cgi.escape(subject)
+            print('<title>%s</title>' % cgi.escape(subject))
 
         date = mail.get("date")
         if date:
-            print '<pubDate>%s</pubDate>' % cgi.escape(date)
+            print('<pubDate>%s</pubDate>' % cgi.escape(date))
 
         guid = mail.get("message-id")
         if guid:
             guid = archive.archive_url + guid.strip("<>")
 
-            print '<guid isPermaLink="false">%s</guid>' % cgi.escape(guid)
+            print('<guid isPermaLink="false">%s</guid>' % cgi.escape(guid))
 
         if mail.is_multipart():
             body = mail.get_payload(0)
@@ -151,7 +160,7 @@ def print_rss(archive, mails):
 
         body = parts[0].replace("\n", "<br/>")
 
-        print '<description><![CDATA[%s]]></description>' % body
+        print('<description><![CDATA[%s]]></description>' % body)
 
         for part in parts[1:]:
             # include enclosures
@@ -165,13 +174,13 @@ def print_rss(archive, mails):
             if mime_type and size and url:
                 o = urlparse(url)
                 if o.netloc:
-                    print '<enclosure url="%s" length="%s" type="%s" />' % \
-                        (url, size, mime_type)
+                    print('<enclosure url="%s" length="%s" type="%s" />' % \
+                        (url, size, mime_type))
 
-        print '</item>'
+        print('</item>')
 
-    print '</channel>'
-    print '</rss>'
+    print('</channel>')
+    print('</rss>')
 
 def main():
     parser = get_parser()
@@ -184,7 +193,7 @@ def main():
     months = archive.get_month_archives()
     
     if len(months) == 0:
-        print "ERROR: Could not find month archives in url"
+        print("ERROR: Could not find month archives in url")
         sys.exit(1)
 
     mails = []
